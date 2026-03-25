@@ -292,6 +292,16 @@ async function safeDiscordInteractionCall<T>(
   }
 }
 
+function isDiscordCommandInteraction(
+  interaction: CommandInteraction | ButtonInteraction | StringSelectMenuInteraction,
+): interaction is CommandInteraction {
+  return (
+    "options" in interaction &&
+    typeof (interaction as { defer?: unknown }).defer === "function" &&
+    typeof interaction.options?.getString === "function"
+  );
+}
+
 function buildDiscordCommandArgCustomId(params: {
   command: string;
   arg: string;
@@ -1292,6 +1302,13 @@ async function dispatchDiscordCommandInteraction(params: {
     threadBindings,
     suppressReplies,
   } = params;
+
+  if (isDiscordCommandInteraction(interaction)) {
+    await safeDiscordInteractionCall("interaction defer", async () => {
+      await interaction.defer();
+    });
+  }
+
   const respond = async (content: string, options?: { ephemeral?: boolean }) => {
     const payload = {
       content,

@@ -201,6 +201,7 @@ describe("Discord native plugin command dispatch", () => {
 
     await (command as { run: (interaction: unknown) => Promise<void> }).run(interaction as unknown);
 
+    expect(interaction.defer).toHaveBeenCalledTimes(1);
     expect(executeSpy).toHaveBeenCalledTimes(1);
     expect(dispatchSpy).not.toHaveBeenCalled();
     expect(interaction.reply).toHaveBeenCalledWith(
