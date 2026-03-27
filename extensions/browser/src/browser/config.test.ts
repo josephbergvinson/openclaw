@@ -1,37 +1,77 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { withEnv } from "../../test-support.js";
 import { resolveUserPath } from "../utils.js";
 import { resolveBrowserConfig, resolveProfile, shouldStartLocalBrowserServer } from "./config.js";
 import { getBrowserProfileCapabilities } from "./profile-capabilities.js";
 
+function withTempHome(fn: (homeDir: string) => void) {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-browser-home-"));
+  try {
+    fn(homeDir);
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  }
+}
+
+function withIsolatedHome(homeDir: string, fn: () => void) {
+  withEnv(
+    {
+      OPENCLAW_HOME: undefined,
+      HOME: homeDir,
+      USERPROFILE: homeDir,
+    },
+    fn,
+  );
+}
+
+function createDefaultGoogleChromeUserDataDir(homeDir: string): string {
+  const chromeUserDataDir =
+    process.platform === "darwin"
+      ? path.join(homeDir, "Library", "Application Support", "Google", "Chrome")
+      : process.platform === "linux"
+        ? path.join(homeDir, ".config", "google-chrome")
+        : process.platform === "win32"
+          ? path.join(homeDir, "AppData", "Local", "Google", "Chrome", "User Data")
+          : path.join(homeDir, "google-chrome-user-data");
+  fs.mkdirSync(chromeUserDataDir, { recursive: true });
+  return chromeUserDataDir;
+}
+
 describe("browser config", () => {
   it("defaults to enabled with loopback defaults and lobster-orange color", () => {
-    const resolved = resolveBrowserConfig(undefined);
-    expect(resolved.enabled).toBe(true);
-    expect(resolved.controlPort).toBe(18791);
-    expect(resolved.color).toBe("#FF4500");
-    expect(shouldStartLocalBrowserServer(resolved)).toBe(true);
-    expect(resolved.cdpHost).toBe("127.0.0.1");
-    expect(resolved.cdpProtocol).toBe("http");
-    const profile = resolveProfile(resolved, resolved.defaultProfile);
-    expect(profile?.name).toBe("openclaw");
-    expect(profile?.driver).toBe("openclaw");
-    expect(profile?.cdpPort).toBe(18800);
-    expect(profile?.cdpUrl).toBe("http://127.0.0.1:18800");
+    withTempHome((homeDir) => {
+      withIsolatedHome(homeDir, () => {
+        const resolved = resolveBrowserConfig(undefined);
+        expect(resolved.enabled).toBe(true);
+        expect(resolved.controlPort).toBe(18791);
+        expect(resolved.color).toBe("#FF4500");
+        expect(shouldStartLocalBrowserServer(resolved)).toBe(true);
+        expect(resolved.cdpHost).toBe("127.0.0.1");
+        expect(resolved.cdpProtocol).toBe("http");
+        const profile = resolveProfile(resolved, resolved.defaultProfile);
+        expect(profile?.name).toBe("openclaw");
+        expect(profile?.driver).toBe("openclaw");
+        expect(profile?.cdpPort).toBe(18800);
+        expect(profile?.cdpUrl).toBe("http://127.0.0.1:18800");
 
-    const openclaw = resolveProfile(resolved, "openclaw");
-    expect(openclaw?.driver).toBe("openclaw");
-    expect(openclaw?.cdpPort).toBe(18800);
-    expect(openclaw?.cdpUrl).toBe("http://127.0.0.1:18800");
-    const user = resolveProfile(resolved, "user");
-    expect(user?.driver).toBe("existing-session");
-    expect(user?.cdpPort).toBe(0);
-    expect(user?.cdpUrl).toBe("");
-    expect(user?.userDataDir).toBeUndefined();
-    // chrome-relay is no longer auto-created
-    expect(resolveProfile(resolved, "chrome-relay")).toBe(null);
-    expect(resolved.remoteCdpTimeoutMs).toBe(1500);
-    expect(resolved.remoteCdpHandshakeTimeoutMs).toBe(3000);
+        const openclaw = resolveProfile(resolved, "openclaw");
+        expect(openclaw?.driver).toBe("openclaw");
+        expect(openclaw?.cdpPort).toBe(18800);
+        expect(openclaw?.cdpUrl).toBe("http://127.0.0.1:18800");
+        const user = resolveProfile(resolved, "user");
+        expect(user?.driver).toBe("existing-session");
+        expect(user?.cdpPort).toBe(0);
+        expect(user?.cdpUrl).toBe("");
+        expect(user?.userDataDir).toBeUndefined();
+        // chrome-relay is no longer auto-created
+        expect(resolveProfile(resolved, "chrome-relay")).toBe(null);
+        expect(resolved.remoteCdpTimeoutMs).toBe(1500);
+        expect(resolved.remoteCdpHandshakeTimeoutMs).toBe(3000);
+      });
+    });
   });
 
   it("derives default ports from OPENCLAW_GATEWAY_PORT when unset", () => {
@@ -261,24 +301,48 @@ describe("browser config", () => {
   });
 
   it("resolves existing-session profiles without cdpPort or cdpUrl", () => {
-    const resolved = resolveBrowserConfig({
-      profiles: {
-        "chrome-live": {
-          driver: "existing-session",
-          attachOnly: true,
-          color: "#00AA00",
-        },
-      },
+    withTempHome((homeDir) => {
+      withIsolatedHome(homeDir, () => {
+        const resolved = resolveBrowserConfig({
+          profiles: {
+            "chrome-live": {
+              driver: "existing-session",
+              attachOnly: true,
+              color: "#00AA00",
+            },
+          },
+        });
+        const profile = resolveProfile(resolved, "chrome-live");
+        expect(profile).not.toBeNull();
+        expect(profile?.driver).toBe("existing-session");
+        expect(profile?.attachOnly).toBe(true);
+        expect(profile?.cdpPort).toBe(0);
+        expect(profile?.cdpUrl).toBe("");
+        expect(profile?.cdpIsLoopback).toBe(true);
+        expect(profile?.userDataDir).toBeUndefined();
+        expect(profile?.color).toBe("#00AA00");
+      });
     });
-    const profile = resolveProfile(resolved, "chrome-live");
-    expect(profile).not.toBeNull();
-    expect(profile?.driver).toBe("existing-session");
-    expect(profile?.attachOnly).toBe(true);
-    expect(profile?.cdpPort).toBe(0);
-    expect(profile?.cdpUrl).toBe("");
-    expect(profile?.cdpIsLoopback).toBe(true);
-    expect(profile?.userDataDir).toBeUndefined();
-    expect(profile?.color).toBe("#00AA00");
+  });
+
+  it("auto-resolves the default Google Chrome user data dir for auto-connect existing-session profiles", () => {
+    withTempHome((homeDir) => {
+      const chromeUserDataDir = createDefaultGoogleChromeUserDataDir(homeDir);
+      withIsolatedHome(homeDir, () => {
+        const resolved = resolveBrowserConfig({
+          profiles: {
+            "chrome-live": {
+              driver: "existing-session",
+              attachOnly: true,
+              color: "#00AA00",
+            },
+          },
+        });
+
+        expect(resolveProfile(resolved, "user")?.userDataDir).toBe(chromeUserDataDir);
+        expect(resolveProfile(resolved, "chrome-live")?.userDataDir).toBe(chromeUserDataDir);
+      });
+    });
   });
 
   it("expands tilde-prefixed userDataDir for existing-session profiles", () => {
