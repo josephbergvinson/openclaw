@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { BrowserConfig, BrowserProfileConfig, OpenClawConfig } from "../config/config.js";
 import { resolveGatewayPort } from "../config/paths.js";
 import {
@@ -198,6 +201,63 @@ function ensureDefaultUserBrowserProfile(
   return result;
 }
 
+function resolveHostHomeDir(env: NodeJS.ProcessEnv = process.env): string {
+  const envHome = env.HOME?.trim();
+  if (envHome) {
+    return path.resolve(envHome);
+  }
+  const userProfile = env.USERPROFILE?.trim();
+  if (userProfile) {
+    return path.resolve(userProfile);
+  }
+  return path.resolve(os.homedir());
+}
+
+function resolveDefaultGoogleChromeUserDataDir(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const homeDir = resolveHostHomeDir(env);
+  const candidates =
+    platform === "darwin"
+      ? [
+          path.join(homeDir, "Library", "Application Support", "Google", "Chrome"),
+          path.join(homeDir, "Library", "Application Support", "Google", "Chrome Canary"),
+        ]
+      : platform === "linux"
+        ? [
+            path.join(homeDir, ".config", "google-chrome"),
+            path.join(homeDir, ".config", "google-chrome-beta"),
+            path.join(homeDir, ".config", "google-chrome-unstable"),
+          ]
+        : platform === "win32"
+          ? [
+              path.join(homeDir, "AppData", "Local", "Google", "Chrome", "User Data"),
+              path.join(homeDir, "AppData", "Local", "Google", "Chrome SxS", "User Data"),
+            ]
+          : [];
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    } catch {
+      // ignore path probe failures and fall back to Chrome MCP auto-detect
+    }
+  }
+
+  return undefined;
+}
+
+function resolveExistingSessionUserDataDir(profile: BrowserProfileConfig): string | undefined {
+  const configuredUserDataDir = resolveUserPath(profile.userDataDir?.trim() || "") || undefined;
+  if (configuredUserDataDir) {
+    return configuredUserDataDir;
+  }
+  return resolveDefaultGoogleChromeUserDataDir();
+}
+
 export function resolveBrowserConfig(
   cfg: BrowserConfig | undefined,
   rootConfig?: OpenClawConfig,
@@ -323,14 +383,15 @@ export function resolveProfile(
   const driver = profile.driver === "existing-session" ? "existing-session" : "openclaw";
 
   if (driver === "existing-session") {
-    // existing-session uses Chrome MCP auto-connect; no CDP port/URL needed
+    // existing-session uses Chrome MCP attach; prefer an explicit user data dir when we can
+    // resolve the local default Google Chrome profile, but fall back to Chrome MCP auto-detect.
     return {
       name: profileName,
       cdpPort: 0,
       cdpUrl: "",
       cdpHost: "",
       cdpIsLoopback: true,
-      userDataDir: resolveUserPath(profile.userDataDir?.trim() || "") || undefined,
+      userDataDir: resolveExistingSessionUserDataDir(profile),
       color: profile.color,
       driver,
       attachOnly: true,
