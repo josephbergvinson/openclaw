@@ -571,6 +571,48 @@ describe("Cron issue regressions", () => {
     cron.stop();
   });
 
+  it("preserves remembered alert state after a manual cron.run", async () => {
+    const store = makeStorePath();
+    const runIsolatedAgentJob = vi.fn(async (params: { job: CronJob }) => {
+      params.job.state.lastAlertDeliveryKey = "discord:default:channel:123456:";
+      params.job.state.lastAlertFingerprint = "fingerprint-1";
+      params.job.state.lastAlertDeliveredAtMs = 1234567890;
+      return { status: "ok" as const, summary: "alert delivered", delivered: true };
+    });
+
+    const cron = await startCronForStore({
+      storePath: store.storePath,
+      cronEnabled: false,
+      runIsolatedAgentJob,
+    });
+    const job = await cron.add({
+      name: "manual-alert-state",
+      enabled: true,
+      schedule: { kind: "every", everyMs: 60_000, anchorMs: Date.now() },
+      sessionTarget: "isolated",
+      wakeMode: "next-heartbeat",
+      payload: { kind: "agentTurn", message: "test" },
+      delivery: {
+        mode: "announce",
+        channel: "discord",
+        to: "channel:123456",
+      },
+    });
+
+    const result = await cron.run(job.id, "force");
+    expect(result).toEqual({ ok: true, ran: true });
+
+    const persisted = JSON.parse(await fs.readFile(store.storePath, "utf8")) as {
+      jobs: CronJob[];
+    };
+    const persistedJob = persisted.jobs.find((entry) => entry.id === job.id);
+    expect(persistedJob?.state.lastAlertDeliveryKey).toBe("discord:default:channel:123456:");
+    expect(persistedJob?.state.lastAlertFingerprint).toBe("fingerprint-1");
+    expect(persistedJob?.state.lastAlertDeliveredAtMs).toBe(1234567890);
+
+    cron.stop();
+  });
+
   it("#13845: one-shot jobs with terminal statuses do not re-fire on restart", async () => {
     const store = makeStorePath();
     const pastAt = Date.parse("2026-02-06T09:00:00.000Z");

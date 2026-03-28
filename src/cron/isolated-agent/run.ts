@@ -745,6 +745,7 @@ export async function runCronIsolatedAgentTurn(params: {
     runStartedAt,
     runEndedAt,
     timeoutMs,
+    runStatus: hasFatalErrorPayload ? "error" : "ok",
     resolvedDelivery,
     deliveryRequested,
     skipHeartbeatDelivery,

@@ -133,6 +133,12 @@ export type CronJobState = {
   lastDeliveryError?: string;
   /** Whether the last run's output was delivered to the target channel. */
   lastDelivered?: boolean;
+  /** Canonical delivery target key for the last remembered alert-shaped announce. */
+  lastAlertDeliveryKey?: string;
+  /** Fingerprint of the last remembered alert-shaped announce. */
+  lastAlertFingerprint?: string;
+  /** Timestamp of the last remembered alert-shaped announce. */
+  lastAlertDeliveredAtMs?: number;
 };
 
 export type CronJob = CronJobBase<

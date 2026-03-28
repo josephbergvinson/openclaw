@@ -103,6 +103,7 @@ function makeBaseParams(overrides: {
   synthesizedText?: string;
   deliveryRequested?: boolean;
   runSessionId?: string;
+  runStatus?: "ok" | "error";
   sessionTarget?: string;
   deliveryBestEffort?: boolean;
 }) {
@@ -124,6 +125,7 @@ function makeBaseParams(overrides: {
     runStartedAt: Date.now(),
     runEndedAt: Date.now(),
     timeoutMs: 30_000,
+    runStatus: overrides.runStatus ?? "ok",
     resolvedDelivery,
     deliveryRequested: overrides.deliveryRequested ?? true,
     skipHeartbeatDelivery: false,
@@ -458,6 +460,56 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     expect(first.delivered).toBe(false);
     expect(second.delivered).toBe(false);
     expect(deliverOutboundPayloads).toHaveBeenCalledTimes(2);
+  });
+
+  it("suppresses unchanged alert-shaped announces across distinct run sessions", async () => {
+    vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
+    vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
+    vi.mocked(deliverOutboundPayloads).mockResolvedValue([{ ok: true } as never]);
+
+    const firstText = [
+      "AGENT_WORKSPACE_ISOLATION_FAIL",
+      "STATUS | what: ensure non-main agents do not share main workspace path | result: check_failed | blockers: synthetic_test_blocker | next: none",
+      "Current time: 2026-03-28 03:00 UTC",
+    ].join("\n");
+    const firstParams = makeBaseParams({
+      synthesizedText: firstText,
+      runSessionId: "run-1",
+    }) as Record<string, unknown>;
+    firstParams.resolvedDelivery = {
+      ok: true,
+      channel: "discord",
+      to: "channel:123456",
+      accountId: undefined,
+      threadId: undefined,
+      mode: "explicit",
+    };
+
+    const first = await dispatchCronDelivery(firstParams as never);
+
+    const secondText = [
+      "AGENT_WORKSPACE_ISOLATION_FAIL",
+      "STATUS | what: ensure non-main agents do not share main workspace path | result: check_failed | blockers: synthetic_test_blocker | next: none",
+      "Current time: 2026-03-28 03:05 UTC",
+    ].join("\n");
+    const secondParams = {
+      ...firstParams,
+      runSessionId: "run-2",
+      synthesizedText: secondText,
+      summary: secondText,
+      outputText: secondText,
+      deliveryPayloads: [{ text: secondText }],
+    };
+
+    const second = await dispatchCronDelivery(secondParams as never);
+
+    expect(first.delivered).toBe(true);
+    expect(second.delivered).toBe(false);
+    expect(second.deliveryAttempted).toBe(true);
+    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    expect((firstParams.job as { state: Record<string, unknown> }).state.lastAlertDeliveryKey).toBe(
+      "discord:default:channel:123456:",
+    );
   });
 
   it("prunes the completed-delivery cache back to the entry cap", async () => {

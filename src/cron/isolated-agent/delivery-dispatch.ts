@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { countActiveDescendantRuns } from "../../agents/subagent-registry.js";
 import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import type { ReplyPayload } from "../../auto-reply/types.js";
@@ -14,6 +15,7 @@ import { resolveAgentOutboundIdentity } from "../../infra/outbound/identity.js";
 import { buildOutboundSessionContext } from "../../infra/outbound/session-context.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { logWarn, logError } from "../../logger.js";
+import { DEFAULT_ACCOUNT_ID } from "../../routing/session-key.js";
 import type { CronJob, CronRunTelemetry } from "../types.js";
 import type { DeliveryTargetResolution } from "./delivery-target.js";
 import { pickSummaryFromOutput } from "./helpers.js";
@@ -72,6 +74,176 @@ export function resolveCronDeliveryBestEffort(job: CronJob): boolean {
   return false;
 }
 
+type RememberedCronAlertState = {
+  lastAlertDeliveryKey?: string;
+  lastAlertFingerprint?: string;
+  lastAlertDeliveredAtMs?: number;
+};
+
+const CRON_ALERT_TOKEN_RE =
+  /\b(ALERT|FAIL(?:ED)?|ERROR|WARN(?:ING)?|BLOCK(?:ED|ER)?|DEGRADED|UNREACHABLE|INCIDENT|MISSING|STALE)\b/i;
+const CRON_ALERT_HEADER_RE = /^[A-Z0-9][A-Z0-9_:-]{4,}$/;
+const CRON_ALERT_UUID_RE =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+const CRON_ALERT_ISO_TS_RE =
+  /\b\d{4}-\d{2}-\d{2}[T ][0-2]\d:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z| ?UTC| ?GMT)?\b/g;
+const CRON_ALERT_LONG_NUMBER_RE = /\b\d{13,}\b/g;
+
+function trimCronAlertText(text?: string): string {
+  return typeof text === "string" ? text.trim() : "";
+}
+
+function normalizeCronAlertTextForFingerprint(text?: string): string {
+  const trimmed = trimCronAlertText(text);
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => Boolean(line) && !/^Current time:/i.test(line))
+    .join("\n")
+    .replace(CRON_ALERT_UUID_RE, "<uuid>")
+    .replace(CRON_ALERT_ISO_TS_RE, "<ts>")
+    .replace(CRON_ALERT_LONG_NUMBER_RE, "<long>")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{2,}/g, "\n")
+    .toLowerCase();
+}
+
+function isCronAlertLikeMessage(params: { text?: string; runStatus: "ok" | "error" }): boolean {
+  const text = trimCronAlertText(params.text);
+  if (!text) {
+    return params.runStatus === "error";
+  }
+  if (params.runStatus === "error") {
+    return true;
+  }
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const first = lines[0] ?? "";
+  const second = lines[1] ?? "";
+  const hasStatusLine =
+    second.startsWith("STATUS |") || lines.some((line) => line.startsWith("STATUS |"));
+  const hasBlockersLine = lines.some((line) => line.includes("| blockers:"));
+  if (
+    hasStatusLine &&
+    hasBlockersLine &&
+    (CRON_ALERT_HEADER_RE.test(first) || CRON_ALERT_TOKEN_RE.test(first))
+  ) {
+    return true;
+  }
+  return CRON_ALERT_TOKEN_RE.test(first) && lines.length > 1;
+}
+
+function buildCronAlertDeliveryStateKey(delivery: {
+  channel: string;
+  to: string;
+  accountId?: string;
+  threadId?: string | number;
+}): string {
+  const threadId =
+    delivery.threadId == null || delivery.threadId === "" ? "" : String(delivery.threadId);
+  const accountId = delivery.accountId?.trim() ? delivery.accountId.trim() : DEFAULT_ACCOUNT_ID;
+  const normalizedTo = normalizeDeliveryTarget(delivery.channel, delivery.to);
+  return `${delivery.channel}:${accountId}:${normalizedTo}:${threadId}`;
+}
+
+function computeCronAlertFingerprint(params: {
+  text?: string;
+  runStatus: "ok" | "error";
+}): string | undefined {
+  const normalized = normalizeCronAlertTextForFingerprint(params.text);
+  if (!normalized) {
+    return undefined;
+  }
+  return createHash("sha256").update(`${params.runStatus}|${normalized}`).digest("hex");
+}
+
+function ensureCronJobState(job: CronJob): CronJob["state"] {
+  job.state ??= {};
+  return job.state;
+}
+
+function clearRememberedCronAlert(job: CronJob): void {
+  const state = ensureCronJobState(job);
+  state.lastAlertDeliveryKey = undefined;
+  state.lastAlertFingerprint = undefined;
+  state.lastAlertDeliveredAtMs = undefined;
+}
+
+export function extractRememberedCronAlertState(
+  job: CronJob,
+): RememberedCronAlertState | undefined {
+  const { lastAlertDeliveryKey, lastAlertFingerprint, lastAlertDeliveredAtMs } =
+    ensureCronJobState(job);
+  if (
+    lastAlertDeliveryKey == null &&
+    lastAlertFingerprint == null &&
+    lastAlertDeliveredAtMs == null
+  ) {
+    return undefined;
+  }
+  return {
+    lastAlertDeliveryKey,
+    lastAlertFingerprint,
+    lastAlertDeliveredAtMs,
+  };
+}
+
+export function applyRememberedCronAlertState(
+  job: CronJob,
+  alertState: RememberedCronAlertState | undefined,
+): void {
+  if (!alertState) {
+    return;
+  }
+  const state = ensureCronJobState(job);
+  state.lastAlertDeliveryKey = alertState.lastAlertDeliveryKey;
+  state.lastAlertFingerprint = alertState.lastAlertFingerprint;
+  state.lastAlertDeliveredAtMs = alertState.lastAlertDeliveredAtMs;
+}
+
+function shouldSuppressRepeatedCronAlert(params: {
+  job: CronJob;
+  delivery: SuccessfulDeliveryTarget;
+  runStatus: "ok" | "error";
+  text?: string;
+}): boolean {
+  if (!isCronAlertLikeMessage(params)) {
+    return false;
+  }
+  const fingerprint = computeCronAlertFingerprint(params);
+  if (!fingerprint) {
+    return false;
+  }
+  const key = buildCronAlertDeliveryStateKey(params.delivery);
+  const state = ensureCronJobState(params.job);
+  return state.lastAlertDeliveryKey === key && state.lastAlertFingerprint === fingerprint;
+}
+
+function rememberDeliveredCronAlert(params: {
+  job: CronJob;
+  delivery: SuccessfulDeliveryTarget;
+  runStatus: "ok" | "error";
+  text?: string;
+}): void {
+  if (!isCronAlertLikeMessage(params)) {
+    clearRememberedCronAlert(params.job);
+    return;
+  }
+  const fingerprint = computeCronAlertFingerprint(params);
+  if (!fingerprint) {
+    return;
+  }
+  const state = ensureCronJobState(params.job);
+  state.lastAlertDeliveryKey = buildCronAlertDeliveryStateKey(params.delivery);
+  state.lastAlertFingerprint = fingerprint;
+  state.lastAlertDeliveredAtMs = Date.now();
+}
+
 export type SuccessfulDeliveryTarget = Extract<DeliveryTargetResolution, { ok: true }>;
 
 type DispatchCronDeliveryParams = {
@@ -85,6 +257,7 @@ type DispatchCronDeliveryParams = {
   runStartedAt: number;
   runEndedAt: number;
   timeoutMs: number;
+  runStatus: "ok" | "error";
   resolvedDelivery: DeliveryTargetResolution;
   deliveryRequested: boolean;
   skipHeartbeatDelivery: boolean;
@@ -478,6 +651,19 @@ export async function dispatchCronDelivery(
         : await runDelivery();
       // Only mark delivered when ALL payloads succeeded (no partial failure).
       delivered = deliveryResults.length > 0 && !hadPartialFailure;
+      if (delivered) {
+        rememberDeliveredCronAlert({
+          job: params.job,
+          delivery,
+          runStatus: params.runStatus,
+          text:
+            synthesizedText ??
+            payloadsForDelivery
+              .map((payload) => payload?.text ?? "")
+              .filter(Boolean)
+              .join("\n\n"),
+        });
+      }
       // Intentionally leave partial success uncached: replay may duplicate the
       // successful subset, but caching it here would permanently drop the
       // failed payloads by converting the replay into delivered=true.
@@ -536,6 +722,7 @@ export async function dispatchCronDelivery(
     };
 
     if (!synthesizedText) {
+      clearRememberedCronAlert(params.job);
       return null;
     }
     const initialSynthesizedText = synthesizedText.trim();
@@ -615,11 +802,31 @@ export async function dispatchCronDelivery(
       });
     }
     if (synthesizedText.toUpperCase() === SILENT_REPLY_TOKEN.toUpperCase()) {
+      clearRememberedCronAlert(params.job);
       await cleanupDirectCronSessionIfNeeded();
       return params.withRunSession({
         status: "ok",
         summary,
         outputText,
+        delivered: false,
+        ...params.telemetry,
+      });
+    }
+    if (
+      shouldSuppressRepeatedCronAlert({
+        job: params.job,
+        delivery,
+        runStatus: params.runStatus,
+        text: synthesizedText,
+      })
+    ) {
+      deliveryAttempted = true;
+      await cleanupDirectCronSessionIfNeeded();
+      return params.withRunSession({
+        status: "ok",
+        summary,
+        outputText,
+        deliveryAttempted,
         delivered: false,
         ...params.telemetry,
       });

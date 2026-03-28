@@ -47,6 +47,13 @@ export type CronListPageResult = {
   hasMore: boolean;
   nextOffset: number | null;
 };
+
+function applyRememberedCronAlertStateFromExecutionJob(job: CronJob, executionJob: CronJob): void {
+  job.state.lastAlertDeliveryKey = executionJob.state.lastAlertDeliveryKey;
+  job.state.lastAlertFingerprint = executionJob.state.lastAlertFingerprint;
+  job.state.lastAlertDeliveredAtMs = executionJob.state.lastAlertDeliveredAtMs;
+}
+
 function mergeManualRunSnapshotAfterReload(params: {
   state: CronServiceState;
   jobId: string;
@@ -495,6 +502,7 @@ async function finishPreparedManualRun(
       },
       { preserveSchedule: mode === "force" },
     );
+    applyRememberedCronAlertStateFromExecutionJob(job, executionJob);
 
     emit(state, {
       jobId: job.id,
