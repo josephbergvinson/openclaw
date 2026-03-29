@@ -8,7 +8,11 @@ vi.mock("../chrome-mcp.js", () => ({
 let registerBrowserBasicRoutes: typeof import("./basic.js").registerBrowserBasicRoutes;
 let BrowserProfileUnavailableError: typeof import("../errors.js").BrowserProfileUnavailableError;
 
-function createExistingSessionProfileState(params?: { isHttpReachable?: () => Promise<boolean> }) {
+function createExistingSessionProfileState(params?: {
+  isHttpReachable?: () => Promise<boolean>;
+  isTransportAvailable?: () => Promise<boolean>;
+  isReachable?: () => Promise<boolean>;
+}) {
   return {
     resolved: {
       enabled: true,
@@ -29,7 +33,8 @@ function createExistingSessionProfileState(params?: { isHttpReachable?: () => Pr
           attachOnly: true,
         },
         isHttpReachable: params?.isHttpReachable ?? (async () => true),
-        isReachable: async () => true,
+        isTransportAvailable: params?.isTransportAvailable ?? (async () => true),
+        isReachable: params?.isReachable ?? (async () => true),
       }) as never,
   };
 }
@@ -87,6 +92,24 @@ describe("basic browser routes", () => {
       cdpUrl: null,
       userDataDir: "/tmp/brave-profile",
       pid: 4321,
+    });
+  });
+
+  it("treats attach-only profiles as running when transport is available even if page reachability is false", async () => {
+    const response = await callBasicRouteWithState({
+      state: createExistingSessionProfileState({
+        isTransportAvailable: async () => true,
+        isReachable: async () => false,
+      }),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toMatchObject({
+      profile: "chrome-live",
+      driver: "existing-session",
+      transport: "chrome-mcp",
+      running: true,
+      cdpReady: true,
     });
   });
 });

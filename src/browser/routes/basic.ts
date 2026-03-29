@@ -76,7 +76,7 @@ export function registerBrowserBasicRoutes(app: BrowserRouteRegistrar, ctx: Brow
     try {
       const [cdpHttp, cdpReady] = await Promise.all([
         profileCtx.isHttpReachable(300),
-        profileCtx.isReachable(600),
+        profileCtx.isTransportAvailable(600),
       ]);
 
       const profileState = current.profiles.get(profileCtx.profile.name);
