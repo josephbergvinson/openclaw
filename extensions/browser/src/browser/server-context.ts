@@ -1,4 +1,5 @@
 import { SsrFBlockedError } from "../infra/net/ssrf.js";
+import { listChromeMcpTabs } from "./chrome-mcp.js";
 import { isChromeReachable, resolveOpenClawUserDataDir } from "./chrome.js";
 import type { ResolvedBrowserProfile } from "./config.js";
 import { resolveProfile } from "./config.js";
@@ -176,7 +177,9 @@ export function createBrowserRouteContext(opts: ContextOptions): BrowserRouteCon
         try {
           running = await profileCtx.isTransportAvailable(300);
           if (running) {
-            const tabs = await profileCtx.listTabs().catch(() => [] as BrowserTab[]);
+            const tabs = await listChromeMcpTabs(profile.name, profile.userDataDir, {
+              ephemeral: true,
+            }).catch(() => [] as BrowserTab[]);
             tabCount = tabs.filter((t) => t.type === "page").length;
           }
         } catch {
