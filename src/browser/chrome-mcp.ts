@@ -26,6 +26,16 @@ type ChromeMcpSession = {
   ready: Promise<void>;
 };
 
+type ChromeMcpCallOptions = {
+  ephemeral?: boolean;
+};
+
+type ChromeMcpSessionLease = {
+  session: ChromeMcpSession;
+  cacheKey: string;
+  temporary: boolean;
+};
+
 type ChromeMcpSessionFactory = (
   profileName: string,
   userDataDir?: string,
@@ -307,25 +317,114 @@ async function getSession(profileName: string, userDataDir?: string): Promise<Ch
   }
 }
 
+async function getExistingSession(cacheKey: string): Promise<ChromeMcpSession | null> {
+  let session = sessions.get(cacheKey);
+  if (session && session.transport.pid === null) {
+    sessions.delete(cacheKey);
+    session = undefined;
+  }
+  if (session) {
+    try {
+      await session.ready;
+      return session;
+    } catch (err) {
+      const current = sessions.get(cacheKey);
+      if (current?.transport === session.transport) {
+        sessions.delete(cacheKey);
+      }
+      throw err;
+    }
+  }
+
+  const pending = pendingSessions.get(cacheKey);
+  if (!pending) {
+    return null;
+  }
+
+  session = await pending;
+  try {
+    await session.ready;
+    return session;
+  } catch (err) {
+    const current = sessions.get(cacheKey);
+    if (current?.transport === session.transport) {
+      sessions.delete(cacheKey);
+    }
+    throw err;
+  }
+}
+
+async function createEphemeralSession(
+  profileName: string,
+  userDataDir?: string,
+): Promise<ChromeMcpSession> {
+  const session = await (sessionFactory ?? createRealSession)(profileName, userDataDir);
+  try {
+    await session.ready;
+    return session;
+  } catch (err) {
+    await session.client.close().catch(() => {});
+    throw err;
+  }
+}
+
+async function leaseSession(
+  profileName: string,
+  userDataDir?: string,
+  options: ChromeMcpCallOptions = {},
+): Promise<ChromeMcpSessionLease> {
+  const cacheKey = buildChromeMcpSessionCacheKey(profileName, userDataDir);
+  if (!options.ephemeral) {
+    return {
+      session: await getSession(profileName, userDataDir),
+      cacheKey,
+      temporary: false,
+    };
+  }
+
+  // Status probes should avoid seeding the shared attach session cache, but they can safely
+  // reuse a real cached session if one already exists.
+  const existingSession = await getExistingSession(cacheKey);
+  if (existingSession) {
+    return {
+      session: existingSession,
+      cacheKey,
+      temporary: false,
+    };
+  }
+
+  return {
+    session: await createEphemeralSession(profileName, userDataDir),
+    cacheKey,
+    temporary: true,
+  };
+}
+
 async function callTool(
   profileName: string,
   userDataDir: string | undefined,
   name: string,
   args: Record<string, unknown> = {},
+  options: ChromeMcpCallOptions = {},
 ): Promise<ChromeMcpToolResult> {
-  const cacheKey = buildChromeMcpSessionCacheKey(profileName, userDataDir);
-  const session = await getSession(profileName, userDataDir);
+  const lease = await leaseSession(profileName, userDataDir, options);
   let result: ChromeMcpToolResult;
   try {
-    result = (await session.client.callTool({
+    result = (await lease.session.client.callTool({
       name,
       arguments: args,
     })) as ChromeMcpToolResult;
   } catch (err) {
     // Transport/connection error — tear down session so it reconnects on next call
-    sessions.delete(cacheKey);
-    await session.client.close().catch(() => {});
+    if (!lease.temporary) {
+      sessions.delete(lease.cacheKey);
+      await lease.session.client.close().catch(() => {});
+    }
     throw err;
+  } finally {
+    if (lease.temporary) {
+      await lease.session.client.close().catch(() => {});
+    }
   }
   // Tool-level errors (element not found, script error, etc.) don't indicate a
   // broken connection — don't tear down the session for these.
@@ -361,8 +460,12 @@ async function findPageById(
 export async function ensureChromeMcpAvailable(
   profileName: string,
   userDataDir?: string,
+  options: ChromeMcpCallOptions = {},
 ): Promise<void> {
-  await getSession(profileName, userDataDir);
+  const lease = await leaseSession(profileName, userDataDir, options);
+  if (lease.temporary) {
+    await lease.session.client.close().catch(() => {});
+  }
 }
 
 export function getChromeMcpPid(profileName: string): number | null {
@@ -388,16 +491,18 @@ export async function stopAllChromeMcpSessions(): Promise<void> {
 export async function listChromeMcpPages(
   profileName: string,
   userDataDir?: string,
+  options: ChromeMcpCallOptions = {},
 ): Promise<ChromeMcpStructuredPage[]> {
-  const result = await callTool(profileName, userDataDir, "list_pages");
+  const result = await callTool(profileName, userDataDir, "list_pages", {}, options);
   return extractStructuredPages(result);
 }
 
 export async function listChromeMcpTabs(
   profileName: string,
   userDataDir?: string,
+  options: ChromeMcpCallOptions = {},
 ): Promise<BrowserTab[]> {
-  return toBrowserTabs(await listChromeMcpPages(profileName, userDataDir));
+  return toBrowserTabs(await listChromeMcpPages(profileName, userDataDir, options));
 }
 
 export async function openChromeMcpTab(
