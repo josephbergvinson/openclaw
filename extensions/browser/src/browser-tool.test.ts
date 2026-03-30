@@ -818,3 +818,19 @@ describe("browser tool act stale target recovery", () => {
     expect(browserActionsMocks.browserAct).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("browser tool description", () => {
+  registerBrowserToolAfterEachReset();
+
+  it("documents host default-profile behavior and explicit openclaw fallback rules", () => {
+    const tool = createBrowserTool();
+    const description = tool.description ?? "";
+
+    expect(description).toContain(
+      "omit profile to use the configured default profile for the selected target",
+    );
+    expect(description).toContain('that usually means profile="user"');
+    expect(description).toContain('Use profile="openclaw" only when you explicitly want');
+    expect(description).toContain("do not switch to it as a fallback");
+  });
+});

@@ -4,11 +4,13 @@ import {
   applyBrowserProxyPaths,
   createBrowserControlContext,
   createBrowserRouteDispatcher,
+  createSubsystemLogger,
   errorShape,
   isNodeCommandAllowed,
   isPersistentBrowserProfileMutation,
   loadConfig,
   persistBrowserProxyFiles,
+  resolveBrowserConfig,
   resolveNodeCommandAllowlist,
   resolveRequestedBrowserProfile,
   respondUnavailableOnNodeInvokeError,
@@ -36,6 +38,8 @@ type BrowserProxyResult = {
   result: unknown;
   files?: BrowserProxyFile[];
 };
+
+const browserRequestLog = createSubsystemLogger("browser/request");
 
 function isBrowserNode(node: NodeSession) {
   const caps = Array.isArray(node.caps) ? node.caps : [];
@@ -170,6 +174,8 @@ export async function handleBrowserGatewayRequest({
   }
 
   const cfg = loadConfig();
+  const requestedProfile = resolveRequestedBrowserProfile({ query, body });
+  const resolvedBrowserConfig = resolveBrowserConfig(cfg.browser, cfg);
   let nodeTarget: NodeSession | null = null;
   try {
     nodeTarget = resolveBrowserNodeTarget({
@@ -201,13 +207,22 @@ export async function handleBrowserGatewayRequest({
       return;
     }
 
+    browserRequestLog.info("browser request route", {
+      method: methodRaw,
+      path,
+      target: "node",
+      nodeId: nodeTarget.nodeId,
+      requestedProfile: requestedProfile ?? null,
+      resolvedProfile: null,
+    });
+
     const proxyParams = {
       method: methodRaw,
       path,
       query,
       body,
       timeoutMs,
-      profile: resolveRequestedBrowserProfile({ query, body }),
+      profile: requestedProfile,
     };
     const res = await context.nodeRegistry.invoke({
       nodeId: nodeTarget.nodeId,
@@ -244,6 +259,15 @@ export async function handleBrowserGatewayRequest({
     respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(err)));
     return;
   }
+
+  browserRequestLog.info("browser request route", {
+    method: methodRaw,
+    path,
+    target: "host",
+    nodeId: null,
+    requestedProfile: requestedProfile ?? null,
+    resolvedProfile: requestedProfile ?? resolvedBrowserConfig.defaultProfile,
+  });
 
   const result = await dispatcher.dispatch({
     method: methodRaw,
