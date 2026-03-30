@@ -88,10 +88,16 @@ can re-register its browser service with the new settings.
 
 For agent browser tool calls:
 
-- Default: use the isolated `openclaw` browser.
-- Prefer `profile="user"` when existing logged-in sessions matter and the user
-  is at the computer to click/approve any attach prompt.
-- `profile` is the explicit override when you want a specific browser mode.
+- Default: omit `profile` to use the configured `browser.defaultProfile` for the
+  selected target.
+- On the local host, prefer `profile="user"` when existing logged-in sessions
+  matter and the user is at the computer to click/approve any attach prompt.
+- Use `profile="openclaw"` only when you explicitly want the isolated managed
+  browser.
+- Do not switch to `openclaw` as a fallback after `profile="user"` attach
+  failures unless the user explicitly asked for managed mode.
+- `profile` remains the explicit override when you want a specific browser
+  mode.
 
 Set `browser.defaultProfile: "openclaw"` if you want managed mode by default.
 
