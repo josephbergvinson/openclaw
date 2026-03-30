@@ -37,6 +37,7 @@ export async function runDiscordGatewayLifecycle(params: {
     runtime: params.runtime,
   });
   let lifecycleStopping = false;
+  const isStopping = () => lifecycleStopping || params.abortSignal?.aborted === true;
 
   const pushStatus = (patch: Parameters<DiscordMonitorStatusSink>[0]) => {
     params.statusSink?.(patch);
@@ -47,7 +48,7 @@ export async function runDiscordGatewayLifecycle(params: {
     runtime: params.runtime,
     abortSignal: params.abortSignal,
     pushStatus,
-    isLifecycleStopping: () => lifecycleStopping,
+    isLifecycleStopping: isStopping,
     drainPendingGatewayErrors: () => drainPendingGatewayErrors(),
   });
   const onGatewayDebug = reconnectController.onGatewayDebug;
@@ -67,7 +68,7 @@ export async function runDiscordGatewayLifecycle(params: {
     // When we deliberately set maxAttempts=0 and disconnected (health-monitor
     // stale-socket restart), Carbon fires "Max reconnect attempts (0)". This
     // is expected — log at info instead of error to avoid false alarms.
-    if (lifecycleStopping && event.type === "reconnect-exhausted") {
+    if (isStopping() && event.type === "reconnect-exhausted") {
       params.runtime.log?.(
         `discord: ignoring expected reconnect-exhausted during shutdown: ${event.message}`,
       );
@@ -87,7 +88,7 @@ export async function runDiscordGatewayLifecycle(params: {
       // both handled without crashing the provider.
       if (
         event.type === "disallowed-intents" ||
-        (lifecycleStopping && event.type === "reconnect-exhausted")
+        (isStopping() && event.type === "reconnect-exhausted")
       ) {
         return "stop";
       }

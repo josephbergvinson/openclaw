@@ -58,9 +58,14 @@ export async function waitForDiscordGatewayStop(
     };
     const onGatewayEvent = (event: DiscordGatewayEvent) => {
       const shouldStop = (params.onGatewayEvent?.(event) ?? "stop") === "stop";
-      if (shouldStop) {
-        finishReject(event.err);
+      if (!shouldStop) {
+        return;
       }
+      if (abortSignal?.aborted) {
+        finishResolve();
+        return;
+      }
+      finishReject(event.err);
     };
     const onForceStop = (err: unknown) => {
       finishReject(err);

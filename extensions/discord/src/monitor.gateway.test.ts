@@ -94,6 +94,23 @@ describe("waitForDiscordGatewayStop", () => {
     expect(detachLifecycle).toHaveBeenCalledTimes(1);
   });
 
+  it("resolves stop events after abort has already begun", async () => {
+    const reconnectEvent = createGatewayEvent(
+      "reconnect-exhausted",
+      "Max reconnect attempts (0) reached after code 1005",
+    );
+    const { abort, detachLifecycle, disconnect, emitGatewayEvent, promise } = startGatewayWait({
+      onGatewayEvent: () => "stop",
+    });
+
+    abort.abort();
+    emitGatewayEvent(reconnectEvent);
+
+    await expect(promise).resolves.toBeUndefined();
+    expect(disconnect).toHaveBeenCalledTimes(1);
+    expect(detachLifecycle).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores transient gateway events when instructed", async () => {
     const transientEvent = createGatewayEvent("other", "transient");
     const onGatewayEvent = vi.fn(() => "continue" as const);

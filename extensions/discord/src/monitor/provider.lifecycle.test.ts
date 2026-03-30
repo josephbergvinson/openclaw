@@ -813,7 +813,7 @@ describe("runDiscordGatewayLifecycle", () => {
     }
   });
 
-  it("does not suppress reconnect-exhausted already queued before shutdown", async () => {
+  it("suppresses reconnect-exhausted already queued before shutdown once abort has begun", async () => {
     const { runDiscordGatewayLifecycle } = await import("./provider.lifecycle.js");
     const pendingGatewayEvents: DiscordGatewayEvent[] = [];
     const abortController = new AbortController();
@@ -836,8 +836,9 @@ describe("runDiscordGatewayLifecycle", () => {
 
     // Start lifecycle; it yields at execApprovalsHandler.start(). We then
     // queue a reconnect-exhausted event and abort. The lifecycle resumes and
-    // drains the queued fatal event before shutdown teardown flips
-    // lifecycleStopping, so the event still rejects the run.
+    // drains the queued event while the abort signal is already set, so the
+    // expected shutdown reconnect-exhausted path is suppressed instead of
+    // crashing the run.
     const lifecyclePromise = runDiscordGatewayLifecycle(lifecycleParams);
 
     pendingGatewayEvents.push(
@@ -848,13 +849,13 @@ describe("runDiscordGatewayLifecycle", () => {
     );
     abortController.abort();
 
-    await expect(lifecyclePromise).rejects.toThrow(
-      "Max reconnect attempts (0) reached after code 1005",
-    );
-    expect(runtimeLog).not.toHaveBeenCalledWith(
+    await expect(lifecyclePromise).resolves.toBeUndefined();
+    expect(runtimeLog).toHaveBeenCalledWith(
       expect.stringContaining("ignoring expected reconnect-exhausted during shutdown"),
     );
-    expect(runtimeError).toHaveBeenCalledWith(expect.stringContaining("Max reconnect attempts"));
+    expect(runtimeError).not.toHaveBeenCalledWith(
+      expect.stringContaining("Max reconnect attempts"),
+    );
   });
 
   it("does not push connected: true when abortSignal is already aborted", async () => {
