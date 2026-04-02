@@ -136,12 +136,12 @@ export function createBrowserRouteContext(opts: ContextOptions): BrowserRouteCon
 
   const forProfile = (profileName?: string): ProfileContext => {
     const current = state();
-    const name = profileName ?? current.resolved.defaultProfile;
     const profile = resolveBrowserProfileWithHotReload({
       current,
       refreshConfigFromDisk,
-      name,
+      name: profileName,
     });
+    const name = profileName ?? current.resolved.defaultProfile;
 
     if (!profile) {
       const available = Object.keys(current.resolved.profiles).join(", ");

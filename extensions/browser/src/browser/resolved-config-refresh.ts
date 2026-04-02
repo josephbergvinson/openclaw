@@ -84,14 +84,15 @@ export function refreshResolvedBrowserConfigFromDisk(params: {
 export function resolveBrowserProfileWithHotReload(params: {
   current: BrowserServerState;
   refreshConfigFromDisk: boolean;
-  name: string;
+  name?: string;
 }): ResolvedBrowserProfile | null {
   refreshResolvedBrowserConfigFromDisk({
     current: params.current,
     refreshConfigFromDisk: params.refreshConfigFromDisk,
     mode: "cached",
   });
-  let profile = resolveProfile(params.current.resolved, params.name);
+  let name = params.name ?? params.current.resolved.defaultProfile;
+  let profile = resolveProfile(params.current.resolved, name);
   if (profile) {
     return profile;
   }
@@ -102,6 +103,7 @@ export function resolveBrowserProfileWithHotReload(params: {
     refreshConfigFromDisk: params.refreshConfigFromDisk,
     mode: "fresh",
   });
-  profile = resolveProfile(params.current.resolved, params.name);
+  name = params.name ?? params.current.resolved.defaultProfile;
+  profile = resolveProfile(params.current.resolved, name);
   return profile;
 }

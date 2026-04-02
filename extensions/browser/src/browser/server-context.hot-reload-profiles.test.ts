@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserServerState } from "./server-context.types.js";
 
 let cfgProfiles: Record<string, { cdpPort?: number; cdpUrl?: string; color?: string }> = {};
+let defaultProfile = "openclaw";
 
 // Simulate module-level cache behavior
 let cachedConfig: ReturnType<typeof buildConfig> | null = null;
@@ -12,7 +13,7 @@ function buildConfig() {
       enabled: true,
       color: "#FF4500",
       headless: true,
-      defaultProfile: "openclaw",
+      defaultProfile,
       profiles: { ...cfgProfiles },
     },
   };
@@ -58,6 +59,7 @@ describe("server-context hot-reload profiles", () => {
       openclaw: { cdpPort: 18800, color: "#FF4500" },
     };
     cachedConfig = null; // Clear simulated cache
+    defaultProfile = "openclaw";
   });
 
   it("forProfile hot-reloads newly added profiles from config", async () => {
@@ -150,6 +152,32 @@ describe("server-context hot-reload profiles", () => {
     });
     expect(after?.cdpPort).toBe(19999);
     expect(state.resolved.profiles.openclaw?.cdpPort).toBe(19999);
+  });
+
+  it("omitted-profile lookups follow refreshed defaultProfile changes", async () => {
+    cfgProfiles = {
+      openclaw: { cdpPort: 18800, color: "#FF4500" },
+      automation: { cdpPort: 9333, color: "#0066CC" },
+    };
+
+    const cfg = loadConfig();
+    const resolved = resolveBrowserConfig(cfg.browser, cfg);
+    const state = {
+      server: null,
+      port: 18791,
+      resolved,
+      profiles: new Map(),
+    };
+
+    defaultProfile = "automation";
+    cachedConfig = null;
+
+    const after = resolveBrowserProfileWithHotReload({
+      current: state,
+      refreshConfigFromDisk: true,
+    });
+    expect(after?.name).toBe("automation");
+    expect(state.resolved.defaultProfile).toBe("automation");
   });
 
   it("listProfiles refreshes config before enumerating profiles", async () => {
