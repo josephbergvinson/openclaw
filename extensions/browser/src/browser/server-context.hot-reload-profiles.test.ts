@@ -6,6 +6,7 @@ let defaultProfile = "openclaw";
 
 // Simulate module-level cache behavior
 let cachedConfig: ReturnType<typeof buildConfig> | null = null;
+let runtimeSnapshot: ReturnType<typeof buildConfig> | null = null;
 
 function buildConfig() {
   return {
@@ -29,7 +30,7 @@ vi.mock("../config/config.js", async (importOriginal) => {
         return buildConfig();
       },
     }),
-    getRuntimeConfigSnapshot: () => null,
+    getRuntimeConfigSnapshot: () => runtimeSnapshot,
     loadConfig: () => {
       // simulate stale loadConfig that doesn't see updates unless cache cleared
       if (!cachedConfig) {
@@ -59,6 +60,7 @@ describe("server-context hot-reload profiles", () => {
       openclaw: { cdpPort: 18800, color: "#FF4500" },
     };
     cachedConfig = null; // Clear simulated cache
+    runtimeSnapshot = null;
     defaultProfile = "openclaw";
   });
 
@@ -169,6 +171,7 @@ describe("server-context hot-reload profiles", () => {
       profiles: new Map(),
     };
 
+    runtimeSnapshot = buildConfig();
     defaultProfile = "automation";
     cachedConfig = null;
 
