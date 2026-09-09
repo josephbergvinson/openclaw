@@ -20,7 +20,8 @@ permissions:
 jobs:
   android:
     name: Critical Security (android)
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # Keep fork security analysis runnable without the upstream runner fleet.
+    runs-on: ${{ github.repository == 'openclaw/openclaw' && 'blacksmith-8vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
     timeout-minutes: 45
     steps:
       - name: Checkout

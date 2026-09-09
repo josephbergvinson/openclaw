@@ -84,6 +84,8 @@ env:
 
 jobs:
   resolve_target:
+    # Scheduled benchmarks include upstream live credentials and report publication.
+    if: github.event_name != 'schedule' || github.repository == 'openclaw/openclaw'
     name: Resolve target ref
     runs-on: ubuntu-24.04
     timeout-minutes: 10
