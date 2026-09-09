@@ -27,6 +27,8 @@ concurrency:
 
 jobs:
   install_smoke:
+    # The scheduled release harness requires upstream workflow identity.
+    if: github.event_name != 'schedule' || github.repository == 'openclaw/openclaw'
     permissions:
       actions: read
       contents: read
