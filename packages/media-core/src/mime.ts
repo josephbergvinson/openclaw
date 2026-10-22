@@ -60,6 +60,7 @@ const EXT_BY_MIME: Record<string, string> = {
   "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
   "text/csv": ".csv",
   "text/plain": ".txt",
+  "text/vtt": ".vtt",
   "text/markdown": ".md",
   "text/html": ".html",
   "text/xml": ".xml",

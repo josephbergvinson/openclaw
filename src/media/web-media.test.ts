@@ -912,6 +912,15 @@ describe("loadWebMedia", () => {
     expect(result.contentType).toBe("text/plain");
   });
 
+  it("preserves validated host-read WebVTT bytes and filename", async () => {
+    const body = "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n日本語 &amp; friends\n";
+    const result = await loadDocumentWithHostRead("captions.vtt", body);
+    expect(result.kind).toBe("document");
+    expect(result.contentType).toBe("text/vtt");
+    expect(result.fileName).toBe("captions.vtt");
+    expect(result.buffer).toEqual(Buffer.from(body));
+  });
+
   it("rejects host-read LOG files even though they map to text/plain", async () => {
     const logFile = path.join(fixtureRoot, "debug.log");
     await fs.writeFile(logFile, "plain text\n", "utf8");
@@ -1316,17 +1325,18 @@ describe("loadWebMedia", () => {
     expect(result.contentType).toBe(contentType);
   });
 
-  it("rejects binary data disguised as a CSV file", async () => {
-    const fakeCsv = path.join(fixtureRoot, "evil.csv");
+  it.each(["csv", "vtt"])("rejects binary data disguised as a %s file", async (extension) => {
+    const fakeTextFile = path.join(fixtureRoot, `evil.${extension}`);
     // Declared plain-text aliases must use the text validator path even when the
     // buffer sniffs as an otherwise allowed archive type.
-    await fs.writeFile(fakeCsv, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
-    await expectLoadWebMediaErrorCode(loadWithHostRead(fakeCsv), "path-not-allowed");
+    await fs.writeFile(fakeTextFile, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+    await expectLoadWebMediaErrorCode(loadWithHostRead(fakeTextFile), "path-not-allowed");
   });
 
   it.each([
     { label: "CSV", fileName: "opaque.csv" },
     { label: "HTML", fileName: "opaque.html" },
+    { label: "WebVTT", fileName: "opaque.vtt" },
   ])("rejects opaque non-NUL binary data disguised as $label", async ({ fileName }) => {
     const fakeTextFile = path.join(fixtureRoot, fileName);
     const opaqueBinary = Buffer.alloc(9000);
@@ -1337,11 +1347,14 @@ describe("loadWebMedia", () => {
     await expectLoadWebMediaErrorCode(loadWithHostRead(fakeTextFile), "path-not-allowed");
   });
 
-  it.each([{ label: "CSV", fileName: "prefix-tail.csv" }])(
+  it.each([
+    { label: "CSV", fileName: "prefix-tail.csv", header: "name,value\n" },
+    { label: "WebVTT", fileName: "prefix-tail.vtt", header: "WEBVTT\n\n" },
+  ])(
     "rejects %s files with a text prefix and binary tail after the old sample window",
-    async ({ fileName }) => {
+    async ({ fileName, header }) => {
       const fakeTextFile = path.join(fixtureRoot, fileName);
-      const textPrefix = Buffer.from(`name,value\n${"row,1\n".repeat(1400)}`, "utf8");
+      const textPrefix = Buffer.from(`${header}${"row,1\n".repeat(1400)}`, "utf8");
       expect(textPrefix.length).toBeGreaterThan(8192);
       const binaryTail = Buffer.from([0x00, 0xff, 0x10, 0x80]);
       await fs.writeFile(fakeTextFile, Buffer.concat([textPrefix, binaryTail]));

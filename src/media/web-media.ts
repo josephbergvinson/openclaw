@@ -198,6 +198,7 @@ const HOST_READ_TEXT_PLAIN_ALIASES = new Set([
   "text/csv",
   "text/markdown",
   "text/plain",
+  "text/vtt",
   "application/json",
   "application/yaml",
 ]);
@@ -210,6 +211,7 @@ const HOST_READ_DECLARED_TEXT_ERROR =
   "and trusted generated HTML reports for local reads";
 const HOST_READ_TEXT_PLAIN_EXTENSION_BY_MIME: Record<string, readonly string[]> = {
   "text/plain": [".txt"],
+  "text/vtt": [".vtt"],
 };
 
 function stripLegacyMediaDirectivePrefix(mediaUrl: string): string {
@@ -538,7 +540,10 @@ function assertHostReadMediaAllowed(params: {
     }
     if (
       isAllowedHostReadTextAlias(declaredMime, params.filePath) &&
-      !params.sniffedContentType &&
+      // file-type recognizes WEBVTT's short header. It still needs whole-buffer
+      // text validation; the signature alone must not admit a binary tail.
+      (!params.sniffedContentType ||
+        (declaredMime === "text/vtt" && params.sniffedContentType === "text/vtt")) &&
       params.buffer &&
       isValidatedHostReadText(params.buffer)
     ) {

@@ -19,6 +19,7 @@ const MANAGED_DOCUMENT_MIME_TYPES = new Set([
   "text/html",
   "text/markdown",
   "text/plain",
+  "text/vtt",
 ]);
 
 export function resolveManagedMediaKind(contentType: string | undefined): ManagedMediaKind | null {

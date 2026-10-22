@@ -29,6 +29,7 @@ import {
   enqueueSessionDelivery,
 } from "../infra/session-delivery-queue-storage.js";
 import { readImageProbeFromHeader, resizeToJpeg } from "../media/image-ops.js";
+import { resolveOutboundAttachmentFromUrl } from "../media/outbound-attachment.js";
 import {
   disposeStoreRemoteFixtures,
   withStoreRemoteFixture,
@@ -2290,6 +2291,58 @@ describe("createManagedOutgoingImageBlocks", () => {
       mimeType: "application/pdf",
       sizeBytes: 16,
     });
+  });
+
+  it("stages WebVTT and serves the exact caption file only through authorized managed delivery", async () => {
+    const body = Buffer.from("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n日本語 &amp; friends\n");
+    const captionPath = path.join(stateDir, "captions.vtt");
+    await fs.writeFile(captionPath, body);
+    const staged = await withEnvAsync({ OPENCLAW_STATE_DIR: stateDir }, () =>
+      resolveOutboundAttachmentFromUrl(captionPath, 1024 * 1024, {
+        mediaAccess: { localRoots: [stateDir], readFile: (filePath) => fs.readFile(filePath) },
+      }),
+    );
+    expect(staged.contentType).toBe("text/vtt");
+    expect(path.extname(staged.path)).toBe(".vtt");
+    expect(await fs.readFile(staged.path)).toEqual(body);
+    const blocks = await createManagedOutgoingImageBlocks({
+      sessionKey: "agent:main:main",
+      mediaUrls: [staged.path],
+      attachments: [{ name: "captions.vtt", mimeType: staged.contentType }],
+      stateDir,
+      localRoots: [stateDir],
+      allowLocalNonImage: true,
+      messageId: "msg-1",
+    });
+    expect(blocks).toEqual([
+      {
+        type: "attachment",
+        attachment: expect.objectContaining({
+          kind: "document",
+          label: "captions.vtt",
+          mimeType: "text/vtt",
+          sizeBytes: body.length,
+        }),
+      },
+    ]);
+    const attachment = (blocks[0] as { attachment?: { url?: string } }).attachment;
+    const request = {
+      stateDir,
+      pathName: attachment?.url ?? "",
+      transcriptMessages: [{ role: "assistant", content: blocks, __openclaw: { id: "msg-1" } }],
+    };
+    const refused = await requestManagedImage({ ...request, denyAuth: true });
+    expect(refused.result.statusCode).toBe(401);
+    expect(refused.result.body.length).toBe(0);
+    const { result } = await requestManagedImage({
+      ...request,
+      authResponse: { authMethod: "token" },
+    });
+    expect(result.statusCode).toBe(200);
+    expect(result.headers["content-type"]).toBe("text/vtt");
+    expect(result.headers["content-disposition"]).toContain('attachment; filename="captions.vtt"');
+    expect(result.headers["x-content-type-options"]).toBe("nosniff");
+    expect(result.body).toEqual(body);
   });
 
   it("prepares advertised PowerPoint documents as managed attachments", async () => {

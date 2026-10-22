@@ -219,6 +219,7 @@ describe("mimeTypeFromFilePath", () => {
     ["clip.avi", "video/x-msvideo"],
     ["clip.mkv", "video/x-matroska"],
     ["clip.webm", "video/webm"],
+    ["captions.VTT", "text/vtt"],
     ["https://cdn.example.com/render%2Em%70%34", "video/mp4"],
     ["https://cdn.example.com/bad%ZZ/render%2Emp4", "video/mp4"],
     ["https://cdn.example.com/archive%2Fclip%2Emp4", "video/mp4"],
@@ -248,6 +249,7 @@ describe("extensionForMime", () => {
     ["audio/mp4", ".m4a"],
     [" VIDEO/VND.AVI; codec=DIVX ", ".avi"],
     ["application/xml", ".xml"],
+    ["text/vtt; charset=utf-8", ".vtt"],
     ["video/unknown", undefined],
     [undefined, undefined],
   ])("maps %s to extension", (mime, expected) => {
